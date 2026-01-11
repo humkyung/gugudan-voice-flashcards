@@ -5,16 +5,15 @@ import re
 import time
 
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 from streamlit_mic_recorder import mic_recorder
-import streamlit.components.v1 as components
 
 # -----------------------------
 # Config
 # -----------------------------
 st.set_page_config(page_title="음성 구구단 카드 게임", layout="wide")
-
-FLIP_DELAY_SEC = 0.25  # ✅ 카드가 바뀔 때 0.25초 텀(자동으로 펼쳐지는 느낌)
+FLIP_DELAY_SEC = 0.25
 
 
 # -----------------------------
@@ -42,126 +41,32 @@ def parse_int_from_text(txt: str):
 
 
 def time_limit_for_level(level: int) -> int:
-    # level 1: 10초, level 2: 9초 ... 최소 3초
     return max(3, 11 - level)
 
 
 # -----------------------------
-# Card UI (Flip)
+# Card UI (Responsive + Flip + Timer + Hint on Top)
 # -----------------------------
-def inject_card_css():
-    st.markdown(
-        """
-<style>
-.gugu-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
-  gap: 14px;
-}
-
-.gugu-card {
-  height: 110px;
-  perspective: 1000px;
-}
-
-.gugu-card-inner {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  transform-style: preserve-3d;
-  transition: transform 520ms cubic-bezier(.2,.8,.2,1);
-}
-
-.gugu-card.is-flipped .gugu-card-inner {
-  transform: rotateY(180deg);
-}
-
-/* 방금 펼쳐진 카드에만 “촥” */
-.gugu-card.just-flipped .gugu-card-inner {
-  animation: guguFlipIn 520ms cubic-bezier(.2,.8,.2,1) 1;
-}
-
-@keyframes guguFlipIn {
-  0%   { transform: rotateY(0deg); }
-  100% { transform: rotateY(180deg); }
-}
-
-/* 앞/뒤 면 */
-.gugu-face {
-  position: absolute;
-  inset: 0;
-  border-radius: 16px;
-  backface-visibility: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  user-select: none;
-  box-shadow: 0 10px 24px rgba(0,0,0,.10);
-  border: 1px solid rgba(0,0,0,.08);
-}
-
-.gugu-back {
-  background: linear-gradient(135deg, rgba(30, 144, 255, .14), rgba(0,0,0,.04));
-}
-
-.gugu-front {
-  transform: rotateY(180deg);
-  background: rgba(255,255,255,.92);
-}
-
-.gugu-title {
-  font-size: 22px;
-  letter-spacing: .2px;
-}
-
-.gugu-sub {
-  font-size: 14px;
-  opacity: .8;
-  margin-top: 6px;
-  font-weight: 600;
-}
-
-.gugu-badge {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  font-size: 14px;
-  font-weight: 800;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(0,0,0,.10);
-  background: rgba(255,255,255,.85);
-}
-
-.gugu-pulse {
-  position: absolute;
-  inset: -1px;
-  border-radius: 16px;
-  border: 2px solid rgba(30, 144, 255, .55);
-  pointer-events: none;
-  animation: guguPulse 1.1s ease-in-out infinite;
-}
-
-@keyframes guguPulse {
-  0%   { opacity: .25; transform: scale(1.00); }
-  50%  { opacity: .75; transform: scale(1.01); }
-  100% { opacity: .25; transform: scale(1.00); }
-}
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_cards_html(problems, revealed, results, current_idx, just_flipped_idx=None):
+def render_cards_html(
+    problems,
+    revealed,
+    results,
+    current_idx,
+    remain_sec,
+    just_flipped_idx=None,
+):
     css = """
 <style>
 .gugu-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  padding: 8px;
 }
+@media (min-width: 900px) {
+  .gugu-grid { grid-template-columns: repeat(4, minmax(140px, 1fr)); }
+}
+
 .gugu-card { height: 110px; perspective: 1000px; }
 .gugu-card-inner {
   position: relative; width: 100%; height: 100%;
@@ -169,42 +74,67 @@ def render_cards_html(problems, revealed, results, current_idx, just_flipped_idx
   transition: transform 520ms cubic-bezier(.2,.8,.2,1);
 }
 .gugu-card.is-flipped .gugu-card-inner { transform: rotateY(180deg); }
-.gugu-card.just-flipped .gugu-card-inner { animation: guguFlipIn 520ms cubic-bezier(.2,.8,.2,1) 1; }
-@keyframes guguFlipIn { 0% {transform: rotateY(0deg);} 100% {transform: rotateY(180deg);} }
+.gugu-card.just-flipped .gugu-card-inner { animation: flipIn 520ms cubic-bezier(.2,.8,.2,1); }
+@keyframes flipIn { from { transform: rotateY(0); } to { transform: rotateY(180deg); } }
 
 .gugu-face {
   position: absolute; inset: 0;
   border-radius: 16px;
   backface-visibility: hidden;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 700; user-select: none;
-  box-shadow: 0 10px 24px rgba(0,0,0,.10);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  font-weight: 800;
+  user-select: none;
+  box-shadow: 0 10px 24px rgba(0,0,0,.12);
   border: 1px solid rgba(0,0,0,.08);
 }
-.gugu-back { background: linear-gradient(135deg, rgba(30,144,255,.14), rgba(0,0,0,.04)); }
-.gugu-front { transform: rotateY(180deg); background: rgba(255,255,255,.92); }
 
-.gugu-title { font-size: 22px; letter-spacing: .2px; }
-.gugu-sub { font-size: 14px; opacity: .8; margin-top: 6px; font-weight: 600; }
+.gugu-back {
+  background: linear-gradient(135deg, rgba(30,144,255,.15), rgba(0,0,0,.04));
+}
+
+.gugu-front {
+  transform: rotateY(180deg);
+  background: rgba(255,255,255,.95);
+  padding: 8px;
+}
+
+.gugu-hint {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-size: 12px;
+  font-weight: 900;
+  color: #1e88e5;
+}
+
+.gugu-title {
+  font-size: 22px;
+  font-weight: 950;
+  color: #0f172a;
+}
+
+.gugu-timer {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  font-size: 13px;
+  font-weight: 900;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.92);
+  border: 1px solid rgba(0,0,0,.10);
+}
+.gugu-timer.safe { color: #1e7f43; }
+.gugu-timer.warn { color: #b26a00; }
+.gugu-timer.danger { color: #c62828; animation: blink .8s infinite alternate; }
+@keyframes blink { from {opacity:1;} to {opacity:.45;} }
 
 .gugu-badge {
-  position: absolute; top: 10px; right: 10px;
-  font-size: 14px; font-weight: 800;
-  padding: 6px 10px; border-radius: 999px;
-  border: 1px solid rgba(0,0,0,.10);
-  background: rgba(255,255,255,.85);
-}
-.gugu-pulse {
-  position: absolute; inset: -1px;
-  border-radius: 16px;
-  border: 2px solid rgba(30,144,255,.55);
-  pointer-events: none;
-  animation: guguPulse 1.1s ease-in-out infinite;
-}
-@keyframes guguPulse {
-  0% {opacity: .25; transform: scale(1.00);}
-  50% {opacity: .75; transform: scale(1.01);}
-  100% {opacity: .25; transform: scale(1.00);}
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 16px;
 }
 </style>
 """
@@ -215,53 +145,46 @@ def render_cards_html(problems, revealed, results, current_idx, just_flipped_idx
         is_rev = revealed[i]
         res = results[i]
 
-        card_classes = ["gugu-card"]
+        classes = ["gugu-card"]
         if is_rev:
-            card_classes.append("is-flipped")
-        if just_flipped_idx is not None and i == just_flipped_idx:
-            card_classes.append("just-flipped")
+            classes.append("is-flipped")
+        if just_flipped_idx == i:
+            classes.append("just-flipped")
 
+        # Front main text
         if not is_rev:
-            front_main = ""
-            front_sub = ""
+            main = ""
+            hint = ""
         else:
             a, b = p["a"], p["b"]
             if res is None:
-                front_main = f"{a} × {b} = ?"
-                front_sub = "말로 정답을 입력!"
+                main = f"{a} × {b} = ?"
+                hint = "🎤 말로 정답!"
             else:
-                front_main = f"{a} × {b}"
-                front_sub = f"정답: {p['ans']}"
+                # ✅ 정답을 ? 자리에 표시
+                main = f"{a} × {b} = {p['ans']}"
+                hint = ""
 
-        badge_html = ""
-        if is_rev:
-            if res is True:
-                badge_html = '<div class="gugu-badge">✅</div>'
-            elif res is False:
-                badge_html = '<div class="gugu-badge">❌</div>'
-
-        pulse_html = ""
+        # Timer badge only for current unanswered revealed card
+        timer_html = ""
         if i == current_idx and is_rev and res is None:
-            pulse_html = '<div class="gugu-pulse"></div>'
+            sec = max(0, int(remain_sec))
+            cls = "danger" if sec <= 3 else "warn" if sec <= 6 else "safe"
+            timer_html = f'<div class="gugu-timer {cls}">⏱ {sec}s</div>'
+
+        badge = "✅" if res is True else "❌" if res is False else ""
 
         parts.append(
             f"""
-<div class="{' '.join(card_classes)}">
+<div class="{' '.join(classes)}">
   <div class="gugu-card-inner">
-    <div class="gugu-face gugu-back">
-      <div style="text-align:center;">
-        <div class="gugu-title">🂠</div>
-        <div class="gugu-sub">CARD {i+1:02d}</div>
-      </div>
-    </div>
+    <div class="gugu-face gugu-back">🂠</div>
 
     <div class="gugu-face gugu-front">
-      {badge_html}
-      {pulse_html}
-      <div style="text-align:center; padding: 0 10px;">
-        <div class="gugu-title">{html.escape(front_main)}</div>
-        <div class="gugu-sub">{html.escape(front_sub)}</div>
-      </div>
+      {f'<div class="gugu-hint">{hint}</div>' if hint else ''}
+      {f'<div class="gugu-badge">{badge}</div>' if badge else ''}
+      <div class="gugu-title">{html.escape(main)}</div>
+      {timer_html}
     </div>
   </div>
 </div>
@@ -277,12 +200,10 @@ def render_cards_html(problems, revealed, results, current_idx, just_flipped_idx
 # -----------------------------
 if "level" not in st.session_state:
     st.session_state.level = 1
-
 if "game" not in st.session_state:
     st.session_state.game = None
-
-if "last_animated_idx" not in st.session_state:
-    st.session_state.last_animated_idx = None
+if "show_score_popup" not in st.session_state:
+    st.session_state.show_score_popup = False
 
 
 def start_new_game():
@@ -291,120 +212,120 @@ def start_new_game():
         "idx": 0,
         "results": [None] * 16,  # None / True / False
         "revealed": [False] * 16,
-        "card_start_ts": None,  # answer phase에서만 타이머 시작 시간
-        "status": "playing",  # playing / finished
-        "last_heard": "",
-        "phase": "preflip",  # preflip(0.25초) / answer
+        "flipped_once": [False] * 16,  # ✅ flip 애니메이션 1회 보장
+        "phase": "preflip",  # preflip -> answer
         "phase_start_ts": time.time(),
+        "card_start_ts": None,  # answer에서만
+        "last_heard": "",
+        "status": "playing",  # playing / finished
     }
-    st.session_state.last_animated_idx = None
+    st.session_state.show_score_popup = False
 
 
 # -----------------------------
-# UI Header
+# Score Dialog (real modal)
+# -----------------------------
+@st.dialog("🎉 게임 종료!", width="large")
+def show_score_dialog(score: int, correct: int):
+    st.markdown(
+        f"""
+        <div style="text-align:center; padding: 8px 0 6px 0;">
+          <div style="font-size:18px; font-weight:900; color:#111827;">결과</div>
+          <div style="font-size:56px; font-weight:950; color:#0f172a; margin-top:6px;">{score}점</div>
+          <div style="font-size:16px; font-weight:900; color:#334155; margin-top:6px;">정답 {correct} / 16</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("닫기", use_container_width=True):
+            st.session_state.show_score_popup = False
+            st.rerun()
+    with c2:
+        if st.button("다시 하기", use_container_width=True):
+            start_new_game()
+            st.rerun()
+    with c3:
+        if st.button("Level 올리고 다시", use_container_width=True):
+            st.session_state.level += 1
+            start_new_game()
+            st.rerun()
+
+
+# -----------------------------
+# Header
 # -----------------------------
 st.title("🎤 음성 구구단 카드 게임")
 
-colA, colB, colC = st.columns([1, 1, 2])
-with colA:
+top1, top2, top3 = st.columns([1, 1, 2])
+with top1:
     st.write(f"**Level:** {st.session_state.level}")
-with colB:
+with top2:
     if st.button("🔄 새 게임 시작", use_container_width=True):
         start_new_game()
         st.rerun()
-with colC:
-    st.caption("Chrome 권장 / 마이크 권한 허용 필요")
+with top3:
+    st.caption(
+        "모바일은 카드 영역 내부 스크롤로 전체 확인 가능 / Chrome 권장(마이크 권한 필요)"
+    )
 
 if st.session_state.game is None:
-    st.info("아직 게임이 없어. **새 게임 시작**을 눌러줘!")
+    st.info("새 게임을 시작해줘!")
     st.stop()
 
 game = st.session_state.game
-
 
 # -----------------------------
 # Main Game
 # -----------------------------
 if game["status"] == "playing":
-    # 타이머/애니메이션 때문에 자동 새로고침
     st_autorefresh(interval=200, key="tick")  # 0.2초
 
     idx = game["idx"]
-    level = st.session_state.level
-    limit_sec = time_limit_for_level(level)
-
+    limit = time_limit_for_level(st.session_state.level)
     now = time.time()
 
-    # phase 안전장치(옛 state 대비)
-    if "phase" not in game:
-        game["phase"] = "preflip"
-        game["phase_start_ts"] = now
-
-    # -----------------------------
-    # preflip(0.25초 텀) → answer(펼침+제한시간 시작)
-    # -----------------------------
+    # preflip(0.25s) -> answer(펼침+타이머 시작)
     if game["phase"] == "preflip":
-        # 아직 펼치지 않음 (뒷면 유지)
+        # 아직 펼치지 않음
         if now - game["phase_start_ts"] >= FLIP_DELAY_SEC:
             game["revealed"][idx] = True
-            game["card_start_ts"] = now
             game["phase"] = "answer"
-            game["phase_start_ts"] = now
-            # answer로 넘어간 직후 rerun하면 플립 타이밍이 더 예쁨
+            game["card_start_ts"] = now
+            # answer 진입 후 바로 rerun하면 타이밍이 더 안정적
             st.rerun()
     else:
-        # answer 단계: 펼친 상태 유지
+        # answer
         game["revealed"][idx] = True
         if game["card_start_ts"] is None:
             game["card_start_ts"] = now
 
-    # 타이머는 answer 단계에서만 진행
-    if game["phase"] == "answer":
-        elapsed = now - game["card_start_ts"]
-    else:
-        elapsed = 0.0
+    # remain
+    elapsed = (now - game["card_start_ts"]) if game["phase"] == "answer" else 0.0
+    remain = max(0.0, limit - elapsed)
 
-    remain = max(0.0, limit_sec - elapsed)
-
-    # -----------------------------
-    # HUD
-    # -----------------------------
-    st.subheader(f"카드 {idx+1}/16 — 제한시간: **{limit_sec}초**")
-
-    if game["phase"] == "preflip":
-        st.write("카드를 펼치는 중…")
-        st.progress(1.0)  # 연출용(원하면 제거)
-    else:
-        st.progress(remain / limit_sec if limit_sec > 0 else 0.0)
-        st.write(f"남은 시간: **{remain:.1f}초**")
-
-    # -----------------------------
-    # Cards Render
-    # -----------------------------
-    inject_card_css()
-
+    # flip 애니메이션은 딱 1번만
     just_flipped = None
-    if game["phase"] == "answer":
-        # answer로 들어온 순간에만 "just_flipped" 애니메이션 부여
-        if st.session_state.last_animated_idx != idx:
-            just_flipped = idx
-            st.session_state.last_animated_idx = idx
+    if game["phase"] == "answer" and not game["flipped_once"][idx]:
+        just_flipped = idx
+        game["flipped_once"][idx] = True
 
-    st.write("---")
+    # Cards render (responsive + iframe scroll for mobile)
     card_html = render_cards_html(
-        problems=game["problems"],
-        revealed=game["revealed"],
-        results=game["results"],
+        game["problems"],
+        game["revealed"],
+        game["results"],
         current_idx=idx,
+        remain_sec=remain,
         just_flipped_idx=just_flipped,
     )
-    components.html(card_html, height=560, scrolling=False)
+    components.html(card_html, height=720, scrolling=True)
+
     st.write("---")
 
-    # -----------------------------
-    # Answer Input (음성)
-    # - preflip 동안은 입력을 받지 않음(연출 깨짐 방지)
-    # -----------------------------
+    # Answer input only in answer phase
     if game["phase"] == "answer":
         st.write("### 🎙️ 정답 말하기")
         st.caption(
@@ -413,7 +334,7 @@ if game["status"] == "playing":
 
         rec = mic_recorder(
             start_prompt="🎤 녹음 시작",
-            stop_prompt="⏹️ 녹음 종료",
+            stop_prompt="⏹️ 종료",
             just_once=True,
             key=f"mic_{idx}",
         )
@@ -425,10 +346,7 @@ if game["status"] == "playing":
         if heard_text:
             game["last_heard"] = heard_text
 
-        if game["last_heard"]:
-            st.write(f"인식된 텍스트: **{game['last_heard']}**")
-
-        # 시간 초과면 오답
+        # 시간 초과 -> 오답
         if remain <= 0.0 and game["results"][idx] is None:
             game["results"][idx] = False
 
@@ -436,50 +354,42 @@ if game["status"] == "playing":
         if game["results"][idx] is None and game["last_heard"]:
             guess = parse_int_from_text(game["last_heard"])
             if guess is not None:
-                cur = game["problems"][idx]
-                game["results"][idx] = guess == cur["ans"]
+                game["results"][idx] = guess == game["problems"][idx]["ans"]
 
-        # -----------------------------
-        # Next card
-        # -----------------------------
+        # 다음 카드로
         if game["results"][idx] is not None:
-            # 다음 카드 준비
             game["idx"] += 1
-            game["card_start_ts"] = None
             game["last_heard"] = ""
+            game["phase"] = "preflip"
+            game["phase_start_ts"] = time.time()
+            game["card_start_ts"] = None
 
             if game["idx"] >= 16:
                 game["status"] = "finished"
-            else:
-                game["phase"] = "preflip"
-                game["phase_start_ts"] = time.time()
+                st.session_state.show_score_popup = True
 
             st.rerun()
 
-else:
-    # finished
-    correct = sum(1 for x in game["results"] if x is True)
-    score = round(correct / 16 * 100)
+# -----------------------------
+# Finished: keep cards as-is, show dialog
+# -----------------------------
+if game["status"] == "finished":
+    # 카드 상태 그대로 유지하면서 그대로 렌더(타이머/힌트는 더 이상 표시되지 않음)
+    # current_idx는 마지막 카드로 고정(혹은 0으로)
+    keep_idx = min(game["idx"], 15)
 
-    st.success(f"끝! ✅ 정답 {correct}/16  →  **점수 {score}점**")
+    card_html = render_cards_html(
+        game["problems"],
+        game["revealed"],
+        game["results"],
+        current_idx=keep_idx,
+        remain_sec=0,
+        just_flipped_idx=None,
+    )
+    components.html(card_html, height=720, scrolling=True)
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button("다시 하기 (Level 유지)", use_container_width=True):
-            start_new_game()
-            st.rerun()
-    with c2:
-        if st.button("Level 올리고 다시 하기", use_container_width=True):
-            st.session_state.level += 1
-            start_new_game()
-            st.rerun()
-    with c3:
-        if st.button("Level 초기화 (1)", use_container_width=True):
-            st.session_state.level = 1
-            start_new_game()
-            st.rerun()
-
-    st.write("### 결과 상세")
-    for i, p in enumerate(game["problems"]):
-        mark = "✅" if game["results"][i] else "❌"
-        st.write(f"{i+1:02d}. {mark}  {p['a']}×{p['b']} = {p['ans']}")
+    # 점수 모달
+    if st.session_state.show_score_popup:
+        correct = sum(1 for r in game["results"] if r is True)
+        score = round(correct / 16 * 100)
+        show_score_dialog(score, correct)
